@@ -5,6 +5,7 @@ on:
   push:
     paths:
       - '**/*.zms'
+  workflow_dispatch:     # これを追加
 
 permissions:
   contents: write   # GITHUB_TOKEN にリポジトリ書き込み権限を付与
@@ -14,58 +15,53 @@ jobs:
     runs-on: windows-latest
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v3
-      with:
-        # デフォルトで GITHUB_TOKEN がセットされ persist されるので、
-        # 追加設定不要ですが明示的に書くことも可能です :contentReference[oaicite:0]{index=0}
-        persist-credentials: true
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          persist-credentials: true
 
-    - name: Download MDPlayer (stable)
-      run: |
-        $zip = 'MDPlayer.zip'
-        Invoke-WebRequest `
-          -Uri https://github.com/kuma4649/MDPlayer/releases/download/stable/MDPlayer.zip `
-          -OutFile $zip
-        Expand-Archive $zip -DestinationPath MDPlayer
+      - name: Download MDPlayer (stable)
+        run: |
+          $zip = 'MDPlayer.zip'
+          Invoke-WebRequest `
+            -Uri https://github.com/kuma4649/MDPlayer/releases/download/stable/MDPlayer.zip `
+            -OutFile $zip
+          Expand-Archive $zip -DestinationPath MDPlayer
 
-    - name: Install FFmpeg
-      shell: pwsh
-      run: |
-        choco install ffmpeg --no-progress
+      - name: Install FFmpeg
+        shell: pwsh
+        run: |
+          choco install ffmpeg --no-progress
 
-    - name: Convert all .zms to .wav
-      shell: pwsh
-      run: |
-        $mdp = Join-Path $PWD 'MDPlayer\MDPlayerx64.exe'
-        $loopback = 'audio=Loopback'
-        New-Item -ItemType Directory -Path wav-out | Out-Null
+      - name: Convert all .zms to .wav
+        shell: pwsh
+        run: |
+          $mdp = Join-Path $PWD 'MDPlayer\MDPlayerx64.exe'
+          $loopback = 'audio=Loopback'
+          New-Item -ItemType Directory -Path wav-out | Out-Null
 
-        Get-ChildItem -Path . -Recurse -Filter *.zms | ForEach-Object {
-          $input = $_.FullName
-          $base  = $_.BaseName
-          $out   = Join-Path $PWD "wav-out\$base.wav"
+          Get-ChildItem -Path . -Recurse -Filter *.zms | ForEach-Object {
+            $input = $_.FullName
+            $base  = $_.BaseName
+            $out   = Join-Path $PWD "wav-out\$base.wav"
 
-          # MDPlayer をバックグラウンド起動
-          $mdpProc = Start-Process $mdp -ArgumentList '-nogui','-PL-',$input -PassThru
-          Start-Sleep -Milliseconds 500
+            # MDPlayer をバックグラウンド起動
+            $mdpProc = Start-Process $mdp -ArgumentList '-nogui','-PL-',$input -PassThru
+            Start-Sleep -Milliseconds 500
 
-          # ループバック録音
-          ffmpeg -f dshow -i $loopback -t 30 -acodec pcm_s16le -ar 44100 -ac 2 $out
+            # ループバック録音
+            ffmpeg -f dshow -i $loopback -t 30 -acodec pcm_s16le -ar 44100 -ac 2 $out
 
-          if (!$mdpProc.HasExited) {
-            $mdpProc | Stop-Process -Force
+            if (!$mdpProc.HasExited) {
+              $mdpProc | Stop-Process -Force
+            }
           }
-        }
 
-    - name: Commit and push WAV files
-      shell: bash
-      run: |
-        # GitHub Actions の GITHUB_TOKEN で認証済み :contentReference[oaicite:1]{index=1}
-        git config user.name "github-actions[bot]"
-        git config user.email "github-actions[bot]@users.noreply.github.com"
-        git add wav-out/*.wav
-        # 変更があればコミット
-        git diff-index --quiet HEAD || git commit -m "Add generated WAV files"
-        git push
-
+      - name: Commit and push WAV files
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add wav-out/*.wav
+          git diff-index --quiet HEAD || git commit -m "Add generated WAV files"
+          git push
