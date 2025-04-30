@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write    # リポジトリへのコミット／プッシュに必須
+  contents: write
 
 jobs:
   convert-and-commit:
@@ -21,26 +21,27 @@ jobs:
       with:
         fetch-depth: 0
 
-    # 2) 事前ビルド済み zmusic2 をダウンロード
-    - name: Download prebuilt zmusic2 binary
+    # 2) 事前ビルド済み zmusic2 をダウンロード＆展開
+    - name: Download and extract zmusic2 binary
       run: |
-        # zmusic2 の最新安定版バイナリ (x86_64) を GitLab から取得
         mkdir -p zmusic2-bin
         curl -L \
           https://gitlab.com/linuxbombay/zmusic/binaries/1.1.14.r7.gf6facda/-/raw/main/zmusic-linux-x64.tar.xz \
           -o zmusic2.tar.xz
         tar -xJf zmusic2.tar.xz -C zmusic2-bin
-        chmod +x zmusic2-bin/zmusic2
-        ls -l zmusic2-bin/zmusic2    # バイナリの存在確認  [oai_citation:0‡AUR](https://aur.archlinux.org/packages/zmusic-bin?utm_source=chatgpt.com)
+        echo "Extracted files:"
+        find zmusic2-bin -type f -maxdepth 2 -print
 
     # 3) ZMS → WAV 変換
     - name: Convert all ZMS to WAV
       run: |
-        binary=zmusic2-bin/zmusic2
-        if [ ! -x "$binary" ]; then
-          echo "Error: zmusic2 binary not found or not executable"
+        # 展開された実行ファイルを自動検出
+        binary=$(find zmusic2-bin -type f -perm /u=x | head -n1)
+        if [ -z "$binary" ]; then
+          echo "Error: zmusic2 binary not found"
           exit 1
         fi
+        echo "Using binary: $binary"
 
         mkdir -p wavs
         for f in zms/*.zms; do
@@ -49,7 +50,7 @@ jobs:
           "$binary" "$f" "$out"
         done
 
-    # 4) 生成された WAV を Git に追加＆コミット
+    # 4) 生成された WAV をコミット
     - name: Commit converted WAVs
       run: |
         git config --local user.name "github-actions[bot]"
