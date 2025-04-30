@@ -7,12 +7,6 @@ ZMusic → WAV → MP3 にまとめて変換するスクリプト。
 前提：
   ・システムに zmusic CLI と ffmpeg、lhasa（LZH 展開用）がインストール済み
   ・Python 3.6+ 環境
-
-使い方例：
-  $ python convert_zmusic.py \
-      --src-dir ./ \
-      --out-dir ./output_mp3 \
-      --bitrate 320k
 """
 
 import argparse
@@ -23,14 +17,9 @@ import tempfile
 import zipfile
 
 def extract_archive(path, dest):
-    """
-    .zip は標準ライブラリ zipfile で展開、
-    .lzh は lhasa で安全に展開
-    """
     ext = os.path.splitext(path)[1].lower()
     if ext == '.zip':
         with zipfile.ZipFile(path, 'r') as z:
-            # 安全のため、絶対パスや../を含むエントリはスキップ
             for member in z.namelist():
                 normalized = os.path.normpath(member)
                 if normalized.startswith('..') or os.path.isabs(normalized):
@@ -41,14 +30,13 @@ def extract_archive(path, dest):
                 with z.open(member) as src, open(target, 'wb') as dst:
                     dst.write(src.read())
     elif ext == '.lzh':
-        # lhasa x archive.lzh dest_dir
         subprocess.run(['lhasa', 'x', path, dest], check=True)
     else:
         return False
     return True
 
 def convert_file(zms_path: str, mp3_path: str, bitrate: str):
-    """ZMusic → WAV → MP3"""
+    print(f"[INFO] Converting {zms_path} → {mp3_path}")
     with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp:
         wav_path = tmp.name
 
@@ -70,11 +58,12 @@ def convert_file(zms_path: str, mp3_path: str, bitrate: str):
             os.unlink(wav_path)
 
 def process_path(path, out_root, bitrate, src_root):
-    """
-    ディレクトリ → 再帰探索、
-    .zms → convert_file、
-    .zip/.lzh → extract & 再帰
-    """
+    # out_root 以下はスキップ
+    abs_out = os.path.abspath(out_root)
+    abs_path = os.path.abspath(path)
+    if abs_path.startswith(abs_out + os.sep):
+        return
+
     if os.path.isdir(path):
         for fn in os.listdir(path):
             process_path(os.path.join(path, fn), out_root, bitrate, src_root)
@@ -107,4 +96,6 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)
+    print(f"[INFO] src-dir = {args.src_dir}")
+    print(f"[INFO] out-dir = {args.out_dir}")
     process_path(args.src_dir, args.out_dir, args.bitrate, args.src_dir)
