@@ -24,17 +24,23 @@ jobs:
       run: |
         git clone https://github.com/coelckers/ZMusic.git ZMusic-src
 
+    - name: Install build dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          pkg-config \
+          libglib2.0-dev \
+          libasound2-dev
+
     - name: Build zmusic2 via CMake
       run: |
         mkdir -p ZMusic-src/build
         cd ZMusic-src/build
         cmake -DCMAKE_BUILD_TYPE=Release ..
         cmake --build . --target zmusic2
-      # 上記で build/ ディレクトリ内に zmusic2 実行ファイルが生成されます
 
     - name: Convert all ZMS to WAV
       run: |
-        # ビルドされた zmusic2 バイナリを自動検出
         binary=$(find ZMusic-src/build -maxdepth 1 -type f -executable -name zmusic2)
         if [ -z "$binary" ]; then
           echo "Error: zmusic2 binary not found"
