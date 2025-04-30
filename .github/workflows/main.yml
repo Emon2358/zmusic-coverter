@@ -15,7 +15,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
         with:
-          # GITHUB_TOKEN を用いてコミット・プッシュを許可
           persist-credentials: true
           fetch-depth: 0
 
@@ -25,7 +24,7 @@ jobs:
           sudo apt-get install -y \
             build-essential cmake git \
             libasound2-dev libsndfile1-dev \
-            ffmpeg lha
+            ffmpeg p7zip-full
 
       - name: Build & install ZMusic
         run: |
@@ -55,7 +54,6 @@ jobs:
 
       - name: Commit & Push converted MP3
         run: |
-          # 変更があればコミット＆プッシュ
           if [ -n "$(git status --porcelain output_mp3)" ]; then
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
