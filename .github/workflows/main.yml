@@ -1,0 +1,67 @@
+name: Convert & Commit ZMusic → MP3
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'convert_zmusic.py'
+      - '.github/workflows/convert-zmusic.yml'
+
+jobs:
+  convert-and-commit:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          # GITHUB_TOKEN を用いてコミット・プッシュを許可
+          persist-credentials: true
+          fetch-depth: 0
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake git \
+            libasound2-dev libsndfile1-dev \
+            ffmpeg lha
+
+      - name: Build & install ZMusic
+        run: |
+          git clone https://github.com/coelckers/ZMusic.git
+          mkdir ZMusic/build && cd ZMusic/build
+          cmake -DCMAKE_BUILD_TYPE=Release ..
+          make -j$(nproc)
+          sudo make install
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Install Python deps
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Convert archives and .zms to MP3
+        run: |
+          mkdir -p output_mp3
+          python convert_zmusic.py \
+            --src-dir . \
+            --out-dir output_mp3 \
+            --bitrate 320k
+
+      - name: Commit & Push converted MP3
+        run: |
+          # 変更があればコミット＆プッシュ
+          if [ -n "$(git status --porcelain output_mp3)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add output_mp3
+            git commit -m "chore: auto-convert ZMusic → MP3 ($(date -u +'%Y-%m-%d %H:%M:%S UTC'))"
+            git push
+          else
+            echo "No MP3 changes to commit"
+          fi
