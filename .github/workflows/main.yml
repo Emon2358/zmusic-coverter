@@ -15,28 +15,27 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    # 1) ソースリポジトリをチェックアウト
-    - name: Checkout repository
+    - name: Checkout main repository
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
 
-    # 2) 事前ビルド済み zmusic2 をダウンロード＆展開
-    - name: Download and extract zmusic2 binary
+    - name: Checkout ZMusic source
       run: |
-        mkdir -p zmusic2-bin
-        curl -L \
-          https://gitlab.com/linuxbombay/zmusic/binaries/1.1.14.r7.gf6facda/-/raw/main/zmusic-linux-x64.tar.xz \
-          -o zmusic2.tar.xz
-        tar -xJf zmusic2.tar.xz -C zmusic2-bin
-        echo "Extracted files:"
-        find zmusic2-bin -type f -maxdepth 2 -print
+        git clone https://github.com/coelckers/ZMusic.git ZMusic-src
 
-    # 3) ZMS → WAV 変換
+    - name: Build zmusic2 via CMake
+      run: |
+        mkdir -p ZMusic-src/build
+        cd ZMusic-src/build
+        cmake -DCMAKE_BUILD_TYPE=Release ..
+        cmake --build . --target zmusic2
+      # 上記で build/ ディレクトリ内に zmusic2 実行ファイルが生成されます
+
     - name: Convert all ZMS to WAV
       run: |
-        # 展開された実行ファイルを自動検出
-        binary=$(find zmusic2-bin -type f -perm /u=x | head -n1)
+        # ビルドされた zmusic2 バイナリを自動検出
+        binary=$(find ZMusic-src/build -maxdepth 1 -type f -executable -name zmusic2)
         if [ -z "$binary" ]; then
           echo "Error: zmusic2 binary not found"
           exit 1
@@ -50,7 +49,6 @@ jobs:
           "$binary" "$f" "$out"
         done
 
-    # 4) 生成された WAV をコミット
     - name: Commit converted WAVs
       run: |
         git config --local user.name "github-actions[bot]"
@@ -58,7 +56,6 @@ jobs:
         git add wavs/*.wav
         git diff --cached --quiet || git commit -m "Automated: add converted WAV files"
 
-    # 5) リモートにプッシュ
     - name: Push changes
       run: |
         git push origin HEAD:${{ github.ref }}
