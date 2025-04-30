@@ -25,7 +25,7 @@ jobs:
             build-essential cmake git \
             libasound2-dev libsndfile1-dev \
             libglib2.0-dev \
-            ffmpeg p7zip-full
+            ffmpeg lhasa
 
       - name: Build & install ZMusic
         run: |
