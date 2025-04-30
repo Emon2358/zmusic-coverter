@@ -8,45 +8,37 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: write    # リポジトリへのコミット／プッシュに必須
 
 jobs:
   convert-and-commit:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout main repository
+    # 1) ソースリポジトリをチェックアウト
+    - name: Checkout repository
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
 
-    - name: Checkout zmusic2 source
-      uses: actions/checkout@v4
-      with:
-        repository: kg68k/zmusic2
-        path: zmusic2
-        fetch-depth: 1
-
-    - name: Install iconv shim for u8tosj
+    # 2) 事前ビルド済み zmusic2 をダウンロード
+    - name: Download prebuilt zmusic2 binary
       run: |
-        sudo apt-get update
-        sudo apt-get install -y libc-bin
-        sudo tee /usr/local/bin/u8tosj > /dev/null << 'EOF'
-        #!/bin/sh
-        iconv -f UTF-8 -t CP932
-        EOF
-        sudo chmod +x /usr/local/bin/u8tosj
+        # zmusic2 の最新安定版バイナリ (x86_64) を GitLab から取得
+        mkdir -p zmusic2-bin
+        curl -L \
+          https://gitlab.com/linuxbombay/zmusic/binaries/1.1.14.r7.gf6facda/-/raw/main/zmusic-linux-x64.tar.xz \
+          -o zmusic2.tar.xz
+        tar -xJf zmusic2.tar.xz -C zmusic2-bin
+        chmod +x zmusic2-bin/zmusic2
+        ls -l zmusic2-bin/zmusic2    # バイナリの存在確認  [oai_citation:0‡AUR](https://aur.archlinux.org/packages/zmusic-bin?utm_source=chatgpt.com)
 
-    - name: Build zmusic2
-      working-directory: zmusic2
-      run: make
-
+    # 3) ZMS → WAV 変換
     - name: Convert all ZMS to WAV
       run: |
-        # ビルドされた zmusic2 バイナリを検索
-        binary=$(find zmusic2 -type f -executable -name zmusic2 | head -n1)
-        if [ -z "$binary" ]; then
-          echo "Error: zmusic2 binary not found"
+        binary=zmusic2-bin/zmusic2
+        if [ ! -x "$binary" ]; then
+          echo "Error: zmusic2 binary not found or not executable"
           exit 1
         fi
 
@@ -57,6 +49,7 @@ jobs:
           "$binary" "$f" "$out"
         done
 
+    # 4) 生成された WAV を Git に追加＆コミット
     - name: Commit converted WAVs
       run: |
         git config --local user.name "github-actions[bot]"
@@ -64,5 +57,7 @@ jobs:
         git add wavs/*.wav
         git diff --cached --quiet || git commit -m "Automated: add converted WAV files"
 
+    # 5) リモートにプッシュ
     - name: Push changes
-      run: git push origin HEAD:${{ github.ref }}
+      run: |
+        git push origin HEAD:${{ github.ref }}
