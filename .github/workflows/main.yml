@@ -12,11 +12,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout repository (with LFS)
         uses: actions/checkout@v3
         with:
           persist-credentials: true
           fetch-depth: 0
+          lfs: true
 
       - name: Install system dependencies
         run: |
@@ -53,6 +54,7 @@ jobs:
       - name: Convert archives and .zms to MP3
         run: |
           mkdir -p output_mp3
+          # もしソースが input_zmusic/ にあるなら --src-dir input_zmusic に変更
           python convert_zmusic.py \
             --src-dir . \
             --out-dir output_mp3 \
