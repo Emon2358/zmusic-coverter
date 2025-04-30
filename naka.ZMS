@@ -1,0 +1,29 @@
+(i)
+
+.comment Ç®Ç¡ÇØÅ`(ÃﬂÅ@Ç»Ç©Ç›ÇøÉâÉbÉvÇ¡Ç’                                H.Kanno
+
+.ADPCM_BLOCK_DATA = naka.ZPD
+/ .sc55_part_setup 1= {1}
+
+/ adpcm
+(m01,1000)(aFM1,01)
+(m09,1000)(aADPCM1,09)
+(m10,1000)(aADPCM2,10)
+(m11,1000)(aADPCM3,11)
+(m12,1000)(aADPCM2,12)
+
+(t01)t120l16v15o2@10
+(t10)t100l4v06o4r1r1r1r1c1c1
+(t11)t100l2v12o4aaaabbbbbbbb
+
+(t10)l16|:2ccccc8ccc2:|
+(t11)bbbb
+
+(t10)e1r1r1e2e2e2e2r1r1
+(t11)e1aaaabbbbbbbb
+
+(t10)v10o5c1c16c16c16c16c1
+(t11)g1g16g16g16g16g1
+
+(p)
+
