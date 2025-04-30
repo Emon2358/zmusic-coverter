@@ -5,7 +5,7 @@
 ZMusic → WAV → MP3 にまとめて変換するスクリプト。
 
 前提：
-  ・システムに zmusic CLI と ffmpeg、lha（または lhasa）がインストール済み
+  ・システムに zmusic CLI と ffmpeg、7z（p7zip-full）がインストール済み
   ・Python 3.6+ 環境
 
 使い方例：
@@ -23,13 +23,14 @@ import tempfile
 import zipfile
 
 def extract_archive(path, dest):
-    """.zip は zipfile、.lzh は lha（lhasa）で展開"""
+    """.zip は zipfile、.lzh は 7z で展開"""
     ext = os.path.splitext(path)[1].lower()
     if ext == '.zip':
         with zipfile.ZipFile(path, 'r') as z:
             z.extractall(dest)
     elif ext == '.lzh':
-        subprocess.run(['lha', 'x', path, dest], check=True)
+        # p7zip の 7z コマンドで LZH 展開
+        subprocess.run(['7z', 'x', path, f'-o{dest}', '-y'], check=True)
     else:
         return False
     return True
