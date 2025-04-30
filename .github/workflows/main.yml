@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write    # コードへの書き込み権限を付与
+  contents: write
 
 jobs:
   convert-and-commit:
@@ -19,25 +19,36 @@ jobs:
     - name: Checkout main repository
       uses: actions/checkout@v4
       with:
-        fetch-depth: 0   # 履歴すべてを取得  [oai_citation:0‡GitHub](https://github.com/actions/checkout?utm_source=chatgpt.com)
+        fetch-depth: 0
 
     # 2) zmusic2 リポジトリをチェックアウト
     - name: Checkout zmusic2 source
       uses: actions/checkout@v4
       with:
-        repository: kg68k/zmusic2    # 実際のオーナー／リポ名に置き換え
+        repository: kg68k/zmusic2
         path: zmusic2
-        fetch-depth: 1               # 最新コミットだけでOK  [oai_citation:1‡cicube.io](https://cicube.io/workflow-hub/github-actions-checkout/?utm_source=chatgpt.com)
+        fetch-depth: 1
 
-    # 3) zmusic2 のビルド
+    # 3) iconv を使った u8tosj ラッパーを用意
+    - name: Install iconv shim for u8tosj
+      run: |
+        sudo apt-get update
+        # iconv は libc-bin に含まれていることが多いです
+        sudo apt-get install -y libc-bin
+        sudo tee /usr/local/bin/u8tosj > /dev/null << 'EOF'
+        #!/bin/sh
+        # stdin を UTF-8 → CP932 (Shift_JIS) に変換して stdout に出力
+        iconv -f UTF-8 -t CP932
+        EOF
+        sudo chmod +x /usr/local/bin/u8tosj
+
+    # 4) zmusic2 のビルド
     - name: Build zmusic2
       working-directory: zmusic2
       run: |
-        # 必要に応じて Shift_JIS 変換ツール等をインストール
-        # sudo apt-get update && sudo apt-get install -y u8tosj
         make
 
-    # 4) ZMS → WAV 変換
+    # 5) ZMS → WAV 変換
     - name: Convert all ZMS to WAV
       run: |
         mkdir -p wavs
@@ -46,16 +57,15 @@ jobs:
           zmusic2/build/zmusic2 "$f" "wavs/${f##*/%.zms}.wav"
         done
 
-    # 5) 生成された WAV を Git に追加
+    # 6) 生成された WAV を Git に追加
     - name: Commit converted WAVs
       run: |
         git config --local user.name "github-actions[bot]"
         git config --local user.email "github-actions[bot]@users.noreply.github.com"
         git add wavs/*.wav
-        # 変更がなければスキップ
         git diff --cached --quiet || git commit -m "Automated: add converted WAV files"
 
-    # 6) リモートにプッシュ
+    # 7) リモートにプッシュ
     - name: Push changes
       run: |
         git push origin HEAD:${{ github.ref }}
