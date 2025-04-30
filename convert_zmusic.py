@@ -26,31 +26,30 @@ def extract_archive(path, dest):
                 with z.open(member) as src, open(target, 'wb') as dst:
                     dst.write(src.read())
     elif ext == '.lzh':
-        # 安全に lhasa で展開
         subprocess.run(['lhasa', 'x', path, dest], check=True)
     else:
         return False
     return True
 
 def convert_file(zms_path: str, mp3_path: str, bitrate: str):
-    print(f"[INFO] Converting: {zms_path}")
+    print(f"[INFO] Converting: {zms_path} → {mp3_path}")
     with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp:
         wav_path = tmp.name
 
     try:
         # 1) ZMusic → WAV
         subprocess.run(['zmusic', '-w', wav_path, zms_path], check=True)
-        # 2) WAV → MP3
+
+        # 2) WAV → MP3  ★ここを修正★
         subprocess.run([
-                'ffmpeg', '-y',
-                '-i', wav_path,
-                '-codec:a', 'libmp3lame',
-                '-b:a', bitrate,
-                mp3_path
-            ],
-            check=True
-        )
-        print(f"[OK] → {mp3_path}")
+            'ffmpeg', '-y',
+            '-i', wav_path,
+            '-codec:a', 'libmp3lame',
+            '-b:a', bitrate,
+            mp3_path
+        ], check=True)
+
+        print(f"[OK] {os.path.basename(mp3_path)} created")
     except subprocess.CalledProcessError as e:
         print(f"[ERROR] 変換失敗: {zms_path} ({e})", file=sys.stderr)
     finally:
