@@ -45,6 +45,11 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: List source archives
+        run: |
+          echo ">>> Found sources:"
+          find . -type f \( -name '*.zms' -o -name '*.zip' -o -name '*.lzh' \)
+
       - name: Convert archives and .zms to MP3
         run: |
           mkdir -p output_mp3
@@ -52,6 +57,11 @@ jobs:
             --src-dir . \
             --out-dir output_mp3 \
             --bitrate 320k
+
+      - name: List output_mp3 contents
+        run: |
+          echo ">>> Generated MP3 files:"
+          ls -R output_mp3
 
       - name: Commit & Push converted MP3
         run: |
