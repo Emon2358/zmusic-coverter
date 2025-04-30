@@ -1,79 +1,61 @@
-name: Debug Convert ZMusic → MP3
+# .github/workflows/convert-zms-and-commit.yml
+name: Convert ZMS → WAV and Commit
 
 on:
+  push:
+    paths:
+      - 'zms/**.zms'
   workflow_dispatch:
 
+permissions:
+  contents: write    # コードへの書き込み権限を付与
+
 jobs:
-  debug-convert:
+  convert-and-commit:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-        with:
-          persist-credentials: true
-          fetch-depth: 0
+    # 1) メインリポジトリをチェックアウト
+    - name: Checkout main repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0   # 履歴すべてを取得  [oai_citation:0‡GitHub](https://github.com/actions/checkout?utm_source=chatgpt.com)
 
-      - name: Show $PATH & which commands
-        run: |
-          echo "PATH = $PATH"
-          which zmusic || echo "zmusic not found"
-          which ffmpeg || echo "ffmpeg not found"
-          which lhasa  || echo "lhasa not found"
+    # 2) zmusic2 リポジトリをチェックアウト
+    - name: Checkout zmusic2 source
+      uses: actions/checkout@v4
+      with:
+        repository: kg68k/zmusic2    # 実際のオーナー／リポ名に置き換え
+        path: zmusic2
+        fetch-depth: 1               # 最新コミットだけでOK  [oai_citation:1‡cicube.io](https://cicube.io/workflow-hub/github-actions-checkout/?utm_source=chatgpt.com)
 
-      - name: Install system deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential cmake git \
-            libasound2-dev libsndfile1-dev \
-            libglib2.0-dev ffmpeg lhasa
+    # 3) zmusic2 のビルド
+    - name: Build zmusic2
+      working-directory: zmusic2
+      run: |
+        # 必要に応じて Shift_JIS 変換ツール等をインストール
+        # sudo apt-get update && sudo apt-get install -y u8tosj
+        make
 
-      - name: Build & install ZMusic
-        run: |
-          git clone https://github.com/coelckers/ZMusic.git
-          mkdir ZMusic/build && cd ZMusic/build
-          cmake -DCMAKE_BUILD_TYPE=Release ..
-          make -j$(nproc)
-          sudo make install
-          echo "zmusic version:"
-          zmusic --version || echo "no version output"
+    # 4) ZMS → WAV 変換
+    - name: Convert all ZMS to WAV
+      run: |
+        mkdir -p wavs
+        for f in zms/*.zms; do
+          echo "Converting $f → wavs/${f##*/%.zms}.wav"
+          zmusic2/build/zmusic2 "$f" "wavs/${f##*/%.zms}.wav"
+        done
 
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.x'
+    # 5) 生成された WAV を Git に追加
+    - name: Commit converted WAVs
+      run: |
+        git config --local user.name "github-actions[bot]"
+        git config --local user.email "github-actions[bot]@users.noreply.github.com"
+        git add wavs/*.wav
+        # 変更がなければスキップ
+        git diff --cached --quiet || git commit -m "Automated: add converted WAV files"
 
-      - name: List candidate files
-        run: |
-          echo ">>> Looking for .zms/.zip/.lzh"
-          find . -type f \( -iname "*.zms" -o -iname "*.zip" -o -iname "*.lzh" \)
-
-      - name: Run conversion script
-        run: |
-          mkdir -p output_mp3
-          python convert_zmusic.py --src-dir . --out-dir output_mp3 --bitrate 320k
-
-      - name: List output_mp3
-        run: |
-          echo ">>> Contents of output_mp3:"
-          ls -R output_mp3 || echo "(empty)"
-
-      - name: Fail if no MP3
-        run: |
-          if [ -z "$(find output_mp3 -type f -name '*.mp3')" ]; then
-            echo "::error::No MP3 files were generated!"
-            exit 1
-          fi
-
-      - name: Show MP3 sizes
-        run: |
-          find output_mp3 -type f -name '*.mp3' -exec ls -lh {} \;
-
-      - name: Commit & Push (debug)
-        if: success()
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add output_mp3
-          git commit -m "debug: converted MP3 ($(date -u +'%Y-%m-%d %H:%M:%S UTC'))"
-          git push
+    # 6) リモートにプッシュ
+    - name: Push changes
+      run: |
+        git push origin HEAD:${{ github.ref }}
