@@ -16,71 +16,67 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    # 1) Checkout
+    # 1) Checkout your repo
     - uses: actions/checkout@v3
       with:
         persist-credentials: true
 
-    # 2) Clone zmusic2
+    # 2) Clone the ZMUSIC2 source
     - name: Clone ZMUSIC2
       run: git clone https://github.com/kg68k/zmusic2.git zmusic2
 
-    # 3) Install cross-toolchain + audio tools
+    # 3) Install cross-toolchain and audio tools (remove vasm/vlink—they aren’t in apt) 
     - name: Install toolchain & audio
       run: |
         sudo apt-get update
         sudo apt-get install -y \
           binutils-m68k-linux-gnu gcc-m68k-linux-gnu \
           libc6-m68k-cross libc6-dev-m68k-cross \
-          vasm vlink                   \
           pulseaudio pulseaudio-utils \
           ffmpeg nkf
 
-    # 4) Patch Makefile to use m68k cross-tools
-    - name: Patch build/Makefile for m68k cross-tools
+    # 4) Patch Makefile to use the m68k cross-assembler instead of has060/hlk
+    - name: Patch Makefile for cross-tools
       run: |
         cd zmusic2
-        # copy Makefile into build (we will drive compile there)
         mkdir -p build
         cp Makefile build/
-        # in build/Makefile replace AS, LD
-        sed -i -e 's|^AS *=.*|AS = m68k-linux-gnu-as|' \
-               -e 's|^LD *=.*|LD = m68k-linux-gnu-ld|' \
-               build/Makefile
+        sed -i \
+          -e 's|^AS *=.*|AS = m68k-linux-gnu-as|' \
+          -e 's|^LD *=.*|LD = m68k-linux-gnu-ld|' \
+          build/Makefile
 
-    # 5) Convert UTF-8→Shift_JIS and assemble
-    - name: Convert sources & make ZMUSIC.X
+    # 5) Convert UTF-8 → Shift_JIS and build ZMUSIC.X
+    - name: Build ZMUSIC2
       run: |
         cd zmusic2
-        # 5.a src/*.s,*.mac → build/ (Shift_JIS)
         for f in src/*.{s,mac}; do
           [ -e "$f" ] || continue
           nkf -s "$f" > build/$(basename "$f")
         done
-        # 5.b build
         cd build
         make clean
         make ZMUSIC.X
 
-    # 6) Verify binary
-    - name: Show ZMUSIC.X
+    # 6) Verify the binary was produced
+    - name: List built ZMUSIC binary
       run: ls -l zmusic2/build/ZMUSIC.X
 
-    # 7) Start PulseAudio so pactl works
+    # 7) Start PulseAudio so pactl will connect
     - name: Launch PulseAudio
       run: pulseaudio --start || true
 
-    # 8) Create null-sink for capture
-    - name: Setup null-sink
+    # 8) Create a null-sink for capture
+    - name: Setup null-sink loopback
       run: |
         pactl load-module module-null-sink sink_name=zsink
         pactl load-module module-loopback source=zsink.monitor
 
-    # 9) Play all .zms in one ffmpeg-concat’d WAV
-    - name: Convert and merge to single WAV
+    # 9) Record each .zms then concat into one WAV
+    - name: Convert & merge to single WAV
       run: |
         mkdir -p wav-out
-        # ① 各 .zms を個別の .wav に録音
+        # record each into its own file
         for z in $(find . -name '*.zms'); do
           base=$(basename "$z" .zms)
           ./zmusic2/build/ZMUSIC.X -nogui -PL- "$z" --audio-out zsink &
@@ -89,14 +85,14 @@ jobs:
           ffmpeg -y -f pulse -i zsink.monitor -t 30 wav-out/${base}.wav
           kill $pid || true
         done
-        # ② ffmpeg concat フィルタで一つにまとめる
+        # merge all into combined.wav
         printf "file '%s'\n" wav-out/*.wav > wav-out/list.txt
         ffmpeg -y -f concat -safe 0 -i wav-out/list.txt -c copy wav-out/combined.wav
 
-    # 10) Commit & push
-    - name: Commit WAVs
+    # 10) Commit & push the single combined WAV
+    - name: Commit WAV
       run: |
         git config user.name "github-actions[bot]"
         git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
         git add wav-out/combined.wav
-        git diff --cached --quiet || git commit -m "chore: add combined WAV" && git push
+        git diff --cached --quiet || (git commit -m "chore: add combined WAV" && git push)
