@@ -16,81 +16,76 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    # 1) Checkout your repo
+    # 1) チェックアウト
     - uses: actions/checkout@v3
       with:
         persist-credentials: true
 
-    # 2) Clone the ZMUSIC2 source
+    # 2) ZMUSIC2 ソースをサブディレクトリにクローン
     - name: Clone ZMUSIC2
       run: git clone https://github.com/kg68k/zmusic2.git zmusic2
 
-    # 3) Install cross-toolchain and audio tools (remove vasm/vlink—they aren’t in apt) 
-    - name: Install toolchain & audio
+    # 3) クロスツールチェイン・QEMU・nkf・audio ツールをインストール
+    - name: Install toolchain, qemu-user, audio tools
       run: |
         sudo apt-get update
         sudo apt-get install -y \
-          binutils-m68k-linux-gnu gcc-m68k-linux-gnu \
+          gcc-m68k-linux-gnu binutils-m68k-linux-gnu qemu-user \
           libc6-m68k-cross libc6-dev-m68k-cross \
-          pulseaudio pulseaudio-utils \
-          ffmpeg nkf
+          pulseaudio pulseaudio-utils ffmpeg nkf
 
-    # 4) Patch Makefile to use the m68k cross-assembler instead of has060/hlk
-    - name: Patch Makefile for cross-tools
+    # 4) src/**/*.s/.mac を nkf で Shift_JIS に変換 → build/ へ
+    - name: Convert assembly sources to Shift_JIS
       run: |
         cd zmusic2
         mkdir -p build
-        cp Makefile build/
-        sed -i \
-          -e 's|^AS *=.*|AS = m68k-linux-gnu-as|' \
-          -e 's|^LD *=.*|LD = m68k-linux-gnu-ld|' \
-          build/Makefile
-
-    # 5) Convert UTF-8 → Shift_JIS and build ZMUSIC.X
-    - name: Build ZMUSIC2
-      run: |
-        cd zmusic2
         for f in src/*.{s,mac}; do
           [ -e "$f" ] || continue
           nkf -s "$f" > build/$(basename "$f")
         done
-        cd build
-        make clean
-        make ZMUSIC.X
 
-    # 6) Verify the binary was produced
-    - name: List built ZMUSIC binary
-      run: ls -l zmusic2/build/ZMUSIC.X
-
-    # 7) Start PulseAudio so pactl will connect
-    - name: Launch PulseAudio
-      run: pulseaudio --start || true
-
-    # 8) Create a null-sink for capture
-    - name: Setup null-sink loopback
+    # 5) m68k-as／ld で ELF バイナリを生成
+    - name: Assemble & link ZMUSIC2 into m68k ELF
       run: |
+        cd zmusic2/build
+        # 各 .s → .o
+        for s in *.s; do
+          m68k-linux-gnu-as "$s" -o "${s%.s}.o"
+        done
+        # 各 .mac → .o
+        for m in *.mac; do
+          m68k-linux-gnu-as "$m" -o "${m%.mac}.o"
+        done
+        # 全 .o をリンク → ELF バイナリ ZMUSIC
+        m68k-linux-gnu-ld *.o -Ttext 0 -o ZMUSIC
+
+    # 6) PulseAudio デーモン起動＋null-sink 作成
+    - name: Setup PulseAudio null-sink
+      run: |
+        pulseaudio --start || true           # デーモンが動いていない場合に起動 
         pactl load-module module-null-sink sink_name=zsink
         pactl load-module module-loopback source=zsink.monitor
 
-    # 9) Record each .zms then concat into one WAV
+    # 7) qemu-m68k で ZMUSIC を実行 → ffmpeg で録音し、最後に concat で一本化
     - name: Convert & merge to single WAV
       run: |
         mkdir -p wav-out
-        # record each into its own file
+        # 各 .zms を個別録音
         for z in $(find . -name '*.zms'); do
           base=$(basename "$z" .zms)
-          ./zmusic2/build/ZMUSIC.X -nogui -PL- "$z" --audio-out zsink &
+          echo "Recording $z → wav-out/${base}.wav"
+          qemu-m68k ./zmusic2/build/ZMUSIC -nogui -PL- "$z" --audio-out zsink &
           pid=$!
-          sleep 1
+          sleep 2
           ffmpeg -y -f pulse -i zsink.monitor -t 30 wav-out/${base}.wav
           kill $pid || true
         done
-        # merge all into combined.wav
+        # concat して combined.wav にまとめる
         printf "file '%s'\n" wav-out/*.wav > wav-out/list.txt
         ffmpeg -y -f concat -safe 0 -i wav-out/list.txt -c copy wav-out/combined.wav
 
-    # 10) Commit & push the single combined WAV
-    - name: Commit WAV
+    # 8) 生成された combined.wav をコミット＆プッシュ
+    - name: Commit combined WAV
       run: |
         git config user.name "github-actions[bot]"
         git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
