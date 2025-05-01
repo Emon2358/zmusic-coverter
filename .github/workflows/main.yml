@@ -12,61 +12,68 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  build-and-convert:
     runs-on: ubuntu-latest
 
     steps:
-    # 1) ソース取得（zmusic2 & u8tosj をサブモジュールとして checkout）
+    # 1) リポジトリ全体をチェックアウト（.zms も、WAV もコミット可能）
     - name: Checkout repository
       uses: actions/checkout@v3
       with:
         submodules: 'recursive'
+        persist-credentials: true
 
-    # 2) ビルド環境準備：必須ツールをインストール
+    # 2) ビルドに必要なツール群をインストール
     - name: Install build tools
-      run: sudo apt-get update && sudo apt-get install -y build-essential nasm
+      run: sudo apt-get update && sudo apt-get install -y build-essential nasm ffmpeg pulseaudio
 
-    # 3) u8tosj をビルド（UTF-8→Shift_JIS 変換ツール） :contentReference[oaicite:0]{index=0}
+    # 3) u8tosj のソース取得＆ビルド（Makefile のある src ディレクトリで make） 
     - name: Build u8tosj
       run: |
         git clone https://github.com/kg68k/u8tosj.git _u8tosj
-        cd _u8tosj
+        cd _u8tosj/src
         make
-        sudo cp u8tosj /usr/local/bin/
+        sudo cp u8tosj.r /usr/local/bin/u8tosj
+        sudo chmod +x /usr/local/bin/u8tosj
 
-    # 4) zmusic2 をビルド（Shift_JIS 変換を自動で挟んで build/ 以下に出力） :contentReference[oaicite:1]{index=1}
+    # 4) zmusic2 のビルド（Makefile 内で u8tosj が自動的に使われる）
     - name: Build zmusic2
       run: |
-        # make が u8tosj を使って src→build に Shift_JIS 変換
         make
 
-    # 5) build 以下に生成された実行ファイルを一覧表示
+    # 5) build/ 以下にできたバイナリを確認
     - name: List built binaries
       run: ls -l build/
 
-    # 6) ZMUSIC.X を使って .zms → .wav キャプチャ（SDL-loopback＋ffmpeg）※x680emu不要で擬似再生
-    - name: Convert .zms to .wav
+    # 6) PulseAudio null-sink 準備（再生音声キャプチャ用ループバック）
+    - name: Setup PulseAudio loopback
       run: |
-        sudo apt-get install -y ffmpeg pulseaudio
-        # 仮想ループバック設定
         pactl load-module module-null-sink sink_name=zsink
         pactl load-module module-loopback source=zsink.monitor
+
+    # 7) .zms を見つけて WAV に変換（30 秒録音）
+    - name: Convert .zms to .wav
+      run: |
         mkdir -p wav-out
         for f in $(find . -name '*.zms'); do
           base=$(basename "$f" .zms)
-          # ZMUSIC.X を SDL で動かすエミュレータ等を想定。以下は例:
-          ./build/ZMUSIC.X -PL- "$f" --audio-out zsink &
+          echo "Processing $f → wav-out/${base}.wav"
+          ./build/ZMUSIC.X -nogui -PL- "$f" --audio-out zsink &
           pid=$!
           sleep 1
           ffmpeg -y -f pulse -i zsink.monitor -t 30 wav-out/${base}.wav
           kill $pid || true
         done
 
-    # 7) 生成 WAV をコミット＆プッシュ
+    # 8) 生成された WAV をコミット＆プッシュ
     - name: Commit and push WAV
       run: |
         git config user.name "github-actions[bot]"
         git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
         git add wav-out/*.wav
-        git diff-index --quiet HEAD || git commit -m "chore: add generated WAV from zmusic2"
-        git push
+        if git diff --cached --quiet; then
+          echo "No WAV changes to commit"
+        else
+          git commit -m "chore: add generated WAV from zmusic2"
+          git push
+        fi
