@@ -5,31 +5,32 @@ on:
   push:
     paths:
       - '**/*.zms'
-  workflow_dispatch:    # allow manual runs
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build-and-convert:
     runs-on: windows-latest
 
     steps:
-      # 1) grab your code so we see .zms and can commit .wav back
       - name: Checkout repository
         uses: actions/checkout@v3
         with:
-          # we need write permission to push generated .wav
-          token: ${{ secrets.GITHUB_TOKEN }}
-      # 2) install .NET 8 SDK so we can build the mdpc tool
+          persist-credentials: true
+
       - name: Setup .NET 8 SDK
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
-      # 3) build the entire MDPlayer solution in Release
+
       - name: Build MDPlayer solution
-        run: dotnet build MDPlayer/MDPlayer.sln -c Release
-      # 4) publish the 'mdpc' converter CLI (x64 Windows)
+        run: dotnet build ./MDPlayer/MDPlayer.sln -c Release
+
       - name: Publish mdpc CLI
         run: dotnet publish MDPlayer/mdpc/mdpc.csproj -c Release -r win-x64 --self-contained=false -o mdpc-pub
-      # 5) find every .zms and convert it to .wav next to the source file
+
       - name: Convert all .zms → .wav
         shell: pwsh
         run: |
@@ -38,7 +39,7 @@ jobs:
             Write-Host "Converting $($_.FullName)"
             .\mdpc-pub\mdpc.exe -w $_.FullName
           }
-      # 6) commit & push any newly generated .wav back to the repo
+
       - name: Commit and push WAV files
         shell: pwsh
         run: |
