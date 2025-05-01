@@ -1,80 +1,64 @@
-# .github/workflows/zmusic2-build-and-convert.yml
-name: Build ZMUSIC2 & Convert ZMS → WAV
+name: zms→wav
 
 on:
-  push:
-    paths:
-      - '**/*.zms'
-      - '.github/workflows/zmusic2-build-and-convert.yml'
   workflow_dispatch:
-
-permissions:
-  contents: write
 
 jobs:
   build-and-convert:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v3
-      with:
-        submodules: 'recursive'
-        persist-credentials: true
+      - uses: actions/checkout@v4
 
-    - name: Clone ZMUSIC2 source
-      run: |
-        git clone https://github.com/kg68k/zmusic2.git zmusic2
+      # 1) Install dependencies: PulseAudio, ffmpeg, build tools
+      - name: Install build & audio tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential git cmake pkg-config \
+            pulseaudio pulseaudio-utils \
+            ffmpeg
 
-    - name: Install build tools
-      run: sudo apt-get update && sudo apt-get install -y build-essential nasm ffmpeg pulseaudio nkf
+      # 2) Start PulseAudio in daemon mode so pactl will connect
+      - name: Launch PulseAudio
+        run: |
+          pulseaudio --start
+          # verify it's running
+          pactl info
 
-    - name: Convert assembly sources to Shift_JIS
-      run: |
-        cd zmusic2
-        mkdir -p build
-        for f in src/*.{s,mac}; do
-          [ -e "$f" ] || continue
-          nkf -s "$f" > build/$(basename "$f")
-        done
-        cp Makefile build/
+      # 3) Build run68 (Human68k CUI emulator) so we can run ZMUSIC.X
+      - name: Build run68 emulator
+        run: |
+          git clone https://github.com/rururutan/run68.git run68
+          cd run68/src
+          make
+          sudo cp run68 /usr/local/bin/
 
-    - name: Build zmusic2
-      run: |
-        cd zmusic2/build
-        make
+      # 4) Build zmusic2 as before
+      - name: Build zmusic2 (Shift-JIS conversion + assemble)
+        run: |
+          mkdir -p build
+          # convert all .s source files to Shift-JIS and place in build/
+          for f in src/*; do
+            nkf -s "$f" > build/$(basename "$f")
+          done
+          cp Makefile build/
+          cd build
+          make
 
-    - name: List built binaries
-      run: ls -l zmusic2/build/
+      # 5) Convert every .zms → .wav
+      - name: Convert .zms to .wav via run68 → ZMUSIC.X → PulseAudio → ffmpeg
+        run: |
+          mkdir -p wav
+          for z in *.zms; do
+            base="${z%.zms}"
+            # 5.a run ZMUSIC.X inside run68, direct its audio to our null-sink “zsink”
+            pactl load-module module-null-sink sink_name=zsink
+            run68 build/ZMUSIC.X -nogui -PL- "$z" & sleep 1
+            # 5.b record everything coming into the “zsink.monitor” device for 5 sec
+            ffmpeg -y -f pulse -i zsink.monitor -t 5 wav/"$base".wav
+            pactl unload-module module-null-sink
+          done
 
-    - name: Setup PulseAudio loopback
-      run: |
-        # PulseAudio デーモンが起動していないと pactl が “Connection refused” になるため
-        pulseaudio --start || true    # すでに起動済みでもエラー無視 :contentReference[oaicite:0]{index=0}
-        pactl load-module module-null-sink sink_name=zsink
-        pactl load-module module-loopback source=zsink.monitor
-
-    - name: Convert .zms to .wav
-      run: |
-        mkdir -p wav-out
-        for f in $(find . -name '*.zms'); do
-          base=$(basename "$f" .zms)
-          echo "Processing $f → wav-out/${base}.wav"
-          ./zmusic2/build/ZMUSIC.X -nogui -PL- "$f" --audio-out zsink &
-          pid=$!
-          sleep 1
-          ffmpeg -y -f pulse -i zsink.monitor -t 30 wav-out/${base}.wav
-          kill $pid || true
-        done
-
-    - name: Commit and push WAV
-      run: |
-        git config user.name "github-actions[bot]"
-        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-        git add wav-out/*.wav
-        if git diff --cached --quiet; then
-          echo "No WAV changes to commit"
-        else
-          git commit -m "chore: add generated WAV from zmusic2"
-          git push
-        fi
+      - name: List generated WAVs
+        run: ls -l wav
