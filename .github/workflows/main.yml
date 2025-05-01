@@ -1,40 +1,37 @@
-# .github/workflows/convert-zms-with-mdpc.yml
-name: Convert ZMS → WAV with MDPC (STBL492)
+name: ZMS to WAV Converter
 
 on:
   push:
     paths:
-      - '**/*.zms'
-  workflow_dispatch:
-
-permissions:
-  contents: write
+      - '**.zms'
 
 jobs:
   convert:
     runs-on: windows-latest
 
     steps:
-      # チェックアウト
-      - uses: actions/checkout@v3
-        with:
-          persist-credentials: true
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      # 最新 STBL492 の MDPlayer-STBL492.exe をダウンロード
-      - name: Download MDPlayer STBL492
+      - name: Download MDPlayer
         run: |
-          Invoke-WebRequest `
-            -Uri https://github.com/kuma4649/MDPlayer/releases/download/STBL492/MDPlayer-STBL492.exe `
-            -OutFile MDPlayer-STBL492.exe
-          # GitHub Actions の Windows ランナーには 7z がプリインストール済み :contentReference[oaicite:1]{index=1}
-          7z x MDPlayer-STBL492.exe -oMDPlayer
+          Invoke-WebRequest -Uri "https://github.com/kuma4649/MDPlayer/releases/download/STBL492/MDPlayer-STBL492.exe" -OutFile "MDPlayer.exe"
+          # 展開先のフォルダを作成
+          New-Item -ItemType Directory -Path MDPlayer | Out-Null
+          # 自己解凍で展開（拡張子が .exe でも .zip のように展開可能）
+          Start-Process -Wait -FilePath .\MDPlayer.exe -ArgumentList "/DIR=MDPlayer", "/SILENT"
 
-      # mdpc.exe（MDPlayer CLI）で .zms → .wav
       - name: Convert .zms to .wav
         shell: pwsh
         run: |
           $mdpc = Join-Path $PWD 'MDPlayer\mdpc.exe'
-          New-Item -ItemType Directory -Path wav-out | Out-Null
+
+          # wav-out フォルダが無ければ作成
+          if (-Not (Test-Path "wav-out")) {
+            New-Item -ItemType Directory -Path "wav-out" | Out-Null
+          }
+
+          # .zms → .wav 変換ループ
           Get-ChildItem -Recurse -Filter *.zms | ForEach-Object {
             $in  = $_.FullName
             $out = Join-Path $PWD "wav-out\$($_.BaseName).wav"
@@ -42,16 +39,8 @@ jobs:
             & $mdpc -w $in -o $out
           }
 
-      # 生成された WAV をコミット＆プッシュ
-      - name: Commit WAVs
-        shell: pwsh
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add wav-out/*.wav
-          if (!(git diff --cached --quiet)) {
-            git commit -m "chore: add generated WAV files (STBL492)"
-            git push
-          } else {
-            Write-Host "No changes to commit"
-          }
+      - name: Upload WAV files
+        uses: actions/upload-artifact@v4
+        with:
+          name: wav-files
+          path: wav-out/
