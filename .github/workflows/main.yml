@@ -25,33 +25,34 @@ jobs:
 
     # 2) ビルドに必要なツール群をインストール
     - name: Install build tools
-      run: sudo apt-get update && sudo apt-get install -y build-essential nasm ffmpeg pulseaudio
+      run: sudo apt-get update && sudo apt-get install -y build-essential nasm ffmpeg pulseaudio nkf
 
-    # 3) u8tosj のソース取得＆ビルド（Makefile のある src ディレクトリで make） 
-    - name: Build u8tosj
+    # 3) nkf で src/*.s を Shift_JIS に変換し build/ 以下へ配置
+    - name: Convert assembly sources to Shift_JIS
       run: |
-        git clone https://github.com/kg68k/u8tosj.git _u8tosj
-        cd _u8tosj/src
-        make
-        sudo cp u8tosj.r /usr/local/bin/u8tosj
-        sudo chmod +x /usr/local/bin/u8tosj
+        mkdir -p build
+        for f in src/*.s; do
+          nkf -s "$f" > build/$(basename "$f")
+        done
+        cp Makefile build/
 
-    # 4) zmusic2 のビルド（Makefile 内で u8tosj が自動的に使われる）
+    # 4) zmusic2 を build/ でビルド（Shift_JIS 化済ソースを利用）
     - name: Build zmusic2
       run: |
-        make
+        cd build
+        make    # → build/ZMUSIC.X などが生成される
 
     # 5) build/ 以下にできたバイナリを確認
     - name: List built binaries
       run: ls -l build/
 
-    # 6) PulseAudio null-sink 準備（再生音声キャプチャ用ループバック）
+    # 6) PulseAudio null-sink＋loopback をセットアップ（再生キャプチャ用）
     - name: Setup PulseAudio loopback
       run: |
         pactl load-module module-null-sink sink_name=zsink
         pactl load-module module-loopback source=zsink.monitor
 
-    # 7) .zms を見つけて WAV に変換（30 秒録音）
+    # 7) リポジトリ内の .zms を再生キャプチャして WAV 化
     - name: Convert .zms to .wav
       run: |
         mkdir -p wav-out
