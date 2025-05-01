@@ -16,57 +16,65 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    # 1) リポジトリ全体をチェックアウト（.zms も、WAV もコミット可能）
+    # 1) 自リポジトリをチェックアウト
     - name: Checkout repository
       uses: actions/checkout@v3
       with:
-        submodules: 'recursive'
         persist-credentials: true
 
-    # 2) ビルドに必要なツール群をインストール
+    # 2) zmusic2 をクローン
+    - name: Clone ZMUSIC2 source
+      run: |
+        git clone https://github.com/kg68k/zmusic2.git zmusic2
+
+    # 3) ビルドに必要なツールをインストール
     - name: Install build tools
       run: sudo apt-get update && sudo apt-get install -y build-essential nasm ffmpeg pulseaudio nkf
 
-    # 3) nkf で src/*.s を Shift_JIS に変換し build/ 以下へ配置
+    # 4) zmusic2/src の .s/.mac を nkf で Shift_JIS に変換 → zmusic2/build へ
     - name: Convert assembly sources to Shift_JIS
       run: |
+        cd zmusic2
         mkdir -p build
-        for f in src/*.s; do
+        # .s および .mac ファイルをすべて変換
+        for f in src/*.{s,mac}; do
+          [ -e "$f" ] || continue
           nkf -s "$f" > build/$(basename "$f")
         done
+        # Makefile をコピー
         cp Makefile build/
 
-    # 4) zmusic2 を build/ でビルド（Shift_JIS 化済ソースを利用）
+    # 5) build 以下で make 実行 → ZMUSIC.X 等を生成
     - name: Build zmusic2
       run: |
-        cd build
-        make    # → build/ZMUSIC.X などが生成される
+        cd zmusic2/build
+        make
 
-    # 5) build/ 以下にできたバイナリを確認
+    # 6) 確認
     - name: List built binaries
-      run: ls -l build/
+      run: ls -l zmusic2/build/
 
-    # 6) PulseAudio null-sink＋loopback をセットアップ（再生キャプチャ用）
+    # 7) PulseAudio loopback 準備
     - name: Setup PulseAudio loopback
       run: |
         pactl load-module module-null-sink sink_name=zsink
         pactl load-module module-loopback source=zsink.monitor
 
-    # 7) リポジトリ内の .zms を再生キャプチャして WAV 化
+    # 8) .zms を再生キャプチャして WAV 化
     - name: Convert .zms to .wav
       run: |
         mkdir -p wav-out
         for f in $(find . -name '*.zms'); do
           base=$(basename "$f" .zms)
           echo "Processing $f → wav-out/${base}.wav"
-          ./build/ZMUSIC.X -nogui -PL- "$f" --audio-out zsink &
+          ./zmusic2/build/ZMUSIC.X -nogui -PL- "$f" --audio-out zsink &
           pid=$!
           sleep 1
           ffmpeg -y -f pulse -i zsink.monitor -t 30 wav-out/${base}.wav
           kill $pid || true
         done
 
-    # 8) 生成された WAV をコミット＆プッシュ
+    # 9) 生成 WAV をコミット＆プッシュ
     - name: Commit and push WAV
       run: |
         git config user.name "github-actions[bot]"
