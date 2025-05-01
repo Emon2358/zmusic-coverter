@@ -1,93 +1,57 @@
-# .github/workflows/zmusic2-build-and-convert.yml
-name: Build ZMUSIC2 & Convert ZMS → single WAV
+# .github/workflows/convert-zms-with-mdpc.yml
+name: Convert ZMS → WAV with MDPC (STBL492)
 
 on:
   push:
     paths:
       - '**/*.zms'
-      - '.github/workflows/zmusic2-build-and-convert.yml'
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  build-and-convert:
-    runs-on: ubuntu-latest
+  convert:
+    runs-on: windows-latest
 
     steps:
-    # 1) チェックアウト
-    - uses: actions/checkout@v3
-      with:
-        persist-credentials: true
+      # チェックアウト
+      - uses: actions/checkout@v3
+        with:
+          persist-credentials: true
 
-    # 2) ZMUSIC2 ソースをサブディレクトリにクローン
-    - name: Clone ZMUSIC2
-      run: git clone https://github.com/kg68k/zmusic2.git zmusic2
+      # 最新 STBL492 の MDPlayer-STBL492.exe をダウンロード
+      - name: Download MDPlayer STBL492
+        run: |
+          Invoke-WebRequest `
+            -Uri https://github.com/kuma4649/MDPlayer/releases/download/STBL492/MDPlayer-STBL492.exe `
+            -OutFile MDPlayer-STBL492.exe
+          # GitHub Actions の Windows ランナーには 7z がプリインストール済み :contentReference[oaicite:1]{index=1}
+          7z x MDPlayer-STBL492.exe -oMDPlayer
 
-    # 3) クロスツールチェイン・QEMU・nkf・audio ツールをインストール
-    - name: Install toolchain, qemu-user, audio tools
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          gcc-m68k-linux-gnu binutils-m68k-linux-gnu qemu-user \
-          libc6-m68k-cross libc6-dev-m68k-cross \
-          pulseaudio pulseaudio-utils ffmpeg nkf
+      # mdpc.exe（MDPlayer CLI）で .zms → .wav
+      - name: Convert .zms to .wav
+        shell: pwsh
+        run: |
+          $mdpc = Join-Path $PWD 'MDPlayer\mdpc.exe'
+          New-Item -ItemType Directory -Path wav-out | Out-Null
+          Get-ChildItem -Recurse -Filter *.zms | ForEach-Object {
+            $in  = $_.FullName
+            $out = Join-Path $PWD "wav-out\$($_.BaseName).wav"
+            Write-Host "Converting $in → $out"
+            & $mdpc -w $in -o $out
+          }
 
-    # 4) src/**/*.s/.mac を nkf で Shift_JIS に変換 → build/ へ
-    - name: Convert assembly sources to Shift_JIS
-      run: |
-        cd zmusic2
-        mkdir -p build
-        for f in src/*.{s,mac}; do
-          [ -e "$f" ] || continue
-          nkf -s "$f" > build/$(basename "$f")
-        done
-
-    # 5) m68k-as／ld で ELF バイナリを生成
-    - name: Assemble & link ZMUSIC2 into m68k ELF
-      run: |
-        cd zmusic2/build
-        # 各 .s → .o
-        for s in *.s; do
-          m68k-linux-gnu-as "$s" -o "${s%.s}.o"
-        done
-        # 各 .mac → .o
-        for m in *.mac; do
-          m68k-linux-gnu-as "$m" -o "${m%.mac}.o"
-        done
-        # 全 .o をリンク → ELF バイナリ ZMUSIC
-        m68k-linux-gnu-ld *.o -Ttext 0 -o ZMUSIC
-
-    # 6) PulseAudio デーモン起動＋null-sink 作成
-    - name: Setup PulseAudio null-sink
-      run: |
-        pulseaudio --start || true           # デーモンが動いていない場合に起動 
-        pactl load-module module-null-sink sink_name=zsink
-        pactl load-module module-loopback source=zsink.monitor
-
-    # 7) qemu-m68k で ZMUSIC を実行 → ffmpeg で録音し、最後に concat で一本化
-    - name: Convert & merge to single WAV
-      run: |
-        mkdir -p wav-out
-        # 各 .zms を個別録音
-        for z in $(find . -name '*.zms'); do
-          base=$(basename "$z" .zms)
-          echo "Recording $z → wav-out/${base}.wav"
-          qemu-m68k ./zmusic2/build/ZMUSIC -nogui -PL- "$z" --audio-out zsink &
-          pid=$!
-          sleep 2
-          ffmpeg -y -f pulse -i zsink.monitor -t 30 wav-out/${base}.wav
-          kill $pid || true
-        done
-        # concat して combined.wav にまとめる
-        printf "file '%s'\n" wav-out/*.wav > wav-out/list.txt
-        ffmpeg -y -f concat -safe 0 -i wav-out/list.txt -c copy wav-out/combined.wav
-
-    # 8) 生成された combined.wav をコミット＆プッシュ
-    - name: Commit combined WAV
-      run: |
-        git config user.name "github-actions[bot]"
-        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-        git add wav-out/combined.wav
-        git diff --cached --quiet || (git commit -m "chore: add combined WAV" && git push)
+      # 生成された WAV をコミット＆プッシュ
+      - name: Commit WAVs
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add wav-out/*.wav
+          if (!(git diff --cached --quiet)) {
+            git commit -m "chore: add generated WAV files (STBL492)"
+            git push
+          } else {
+            Write-Host "No changes to commit"
+          }
