@@ -1,67 +1,53 @@
-# .github/workflows/convert-and-commit-zms-to-wav.yml
-name: Convert ZMS → WAV and Commit
+# .github/workflows/convert-zms-to-wav.yml
+name: Convert ZMS → WAV
 
 on:
   push:
     paths:
       - '**/*.zms'
-  workflow_dispatch:     # これを追加
-
-permissions:
-  contents: write   # GITHUB_TOKEN にリポジトリ書き込み権限を付与
+  workflow_dispatch:    # allow manual runs
 
 jobs:
-  zms-to-wav:
+  build-and-convert:
     runs-on: windows-latest
 
     steps:
+      # 1) grab your code so we see .zms and can commit .wav back
       - name: Checkout repository
         uses: actions/checkout@v3
         with:
-          persist-credentials: true
-
-      - name: Download MDPlayer (stable)
-        run: |
-          $zip = 'MDPlayer.zip'
-          Invoke-WebRequest `
-            -Uri https://github.com/kuma4649/MDPlayer/releases/download/stable/MDPlayer.zip `
-            -OutFile $zip
-          Expand-Archive $zip -DestinationPath MDPlayer
-
-      - name: Install FFmpeg
+          # we need write permission to push generated .wav
+          token: ${{ secrets.GITHUB_TOKEN }}
+      # 2) install .NET 8 SDK so we can build the mdpc tool
+      - name: Setup .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      # 3) build the entire MDPlayer solution in Release
+      - name: Build MDPlayer solution
+        run: dotnet build MDPlayer/MDPlayer.sln -c Release
+      # 4) publish the 'mdpc' converter CLI (x64 Windows)
+      - name: Publish mdpc CLI
+        run: dotnet publish MDPlayer/mdpc/mdpc.csproj -c Release -r win-x64 --self-contained=false -o mdpc-pub
+      # 5) find every .zms and convert it to .wav next to the source file
+      - name: Convert all .zms → .wav
         shell: pwsh
         run: |
-          choco install ffmpeg --no-progress
-
-      - name: Convert all .zms to .wav
-        shell: pwsh
-        run: |
-          $mdp = Join-Path $PWD 'MDPlayer\MDPlayerx64.exe'
-          $loopback = 'audio=Loopback'
-          New-Item -ItemType Directory -Path wav-out | Out-Null
-
-          Get-ChildItem -Path . -Recurse -Filter *.zms | ForEach-Object {
-            $input = $_.FullName
-            $base  = $_.BaseName
-            $out   = Join-Path $PWD "wav-out\$base.wav"
-
-            # MDPlayer をバックグラウンド起動
-            $mdpProc = Start-Process $mdp -ArgumentList '-nogui','-PL-',$input -PassThru
-            Start-Sleep -Milliseconds 500
-
-            # ループバック録音
-            ffmpeg -f dshow -i $loopback -t 30 -acodec pcm_s16le -ar 44100 -ac 2 $out
-
-            if (!$mdpProc.HasExited) {
-              $mdpProc | Stop-Process -Force
-            }
+          $ErrorActionPreference = 'Stop'
+          Get-ChildItem -Path . -Recurse -Filter '*.zms' | ForEach-Object {
+            Write-Host "Converting $($_.FullName)"
+            .\mdpc-pub\mdpc.exe -w $_.FullName
           }
-
+      # 6) commit & push any newly generated .wav back to the repo
       - name: Commit and push WAV files
-        shell: bash
+        shell: pwsh
         run: |
           git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add wav-out/*.wav
-          git diff-index --quiet HEAD || git commit -m "Add generated WAV files"
-          git push
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add **/*.wav
+          if (git diff --cached --quiet) {
+            Write-Host "No changes to commit"
+          } else {
+            git commit -m "chore: add generated .wav files"
+            git push
+          }
