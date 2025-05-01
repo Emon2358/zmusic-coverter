@@ -1,54 +1,72 @@
-# .github/workflows/convert-zms-to-wav.yml
-name: Convert ZMS → WAV
+# .github/workflows/zmusic2-build-and-convert.yml
+name: Build ZMUSIC2 & Convert ZMS → WAV
 
 on:
   push:
     paths:
       - '**/*.zms'
+      - '.github/workflows/zmusic2-build-and-convert.yml'
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  build-and-convert:
-    runs-on: windows-latest
+  build:
+    runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
-        with:
-          persist-credentials: true
+    # 1) ソース取得（zmusic2 & u8tosj をサブモジュールとして checkout）
+    - name: Checkout repository
+      uses: actions/checkout@v3
+      with:
+        submodules: 'recursive'
 
-      - name: Setup .NET 8 SDK
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '8.0.x'
+    # 2) ビルド環境準備：必須ツールをインストール
+    - name: Install build tools
+      run: sudo apt-get update && sudo apt-get install -y build-essential nasm
 
-      - name: Build MDPlayer solution
-        run: dotnet build ./MDPlayer/MDPlayer.sln -c Release
+    # 3) u8tosj をビルド（UTF-8→Shift_JIS 変換ツール） :contentReference[oaicite:0]{index=0}
+    - name: Build u8tosj
+      run: |
+        git clone https://github.com/kg68k/u8tosj.git _u8tosj
+        cd _u8tosj
+        make
+        sudo cp u8tosj /usr/local/bin/
 
-      - name: Publish mdpc CLI
-        run: dotnet publish MDPlayer/mdpc/mdpc.csproj -c Release -r win-x64 --self-contained=false -o mdpc-pub
+    # 4) zmusic2 をビルド（Shift_JIS 変換を自動で挟んで build/ 以下に出力） :contentReference[oaicite:1]{index=1}
+    - name: Build zmusic2
+      run: |
+        # make が u8tosj を使って src→build に Shift_JIS 変換
+        make
 
-      - name: Convert all .zms → .wav
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          Get-ChildItem -Path . -Recurse -Filter '*.zms' | ForEach-Object {
-            Write-Host "Converting $($_.FullName)"
-            .\mdpc-pub\mdpc.exe -w $_.FullName
-          }
+    # 5) build 以下に生成された実行ファイルを一覧表示
+    - name: List built binaries
+      run: ls -l build/
 
-      - name: Commit and push WAV files
-        shell: pwsh
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add **/*.wav
-          if (git diff --cached --quiet) {
-            Write-Host "No changes to commit"
-          } else {
-            git commit -m "chore: add generated .wav files"
-            git push
-          }
+    # 6) ZMUSIC.X を使って .zms → .wav キャプチャ（SDL-loopback＋ffmpeg）※x680emu不要で擬似再生
+    - name: Convert .zms to .wav
+      run: |
+        sudo apt-get install -y ffmpeg pulseaudio
+        # 仮想ループバック設定
+        pactl load-module module-null-sink sink_name=zsink
+        pactl load-module module-loopback source=zsink.monitor
+        mkdir -p wav-out
+        for f in $(find . -name '*.zms'); do
+          base=$(basename "$f" .zms)
+          # ZMUSIC.X を SDL で動かすエミュレータ等を想定。以下は例:
+          ./build/ZMUSIC.X -PL- "$f" --audio-out zsink &
+          pid=$!
+          sleep 1
+          ffmpeg -y -f pulse -i zsink.monitor -t 30 wav-out/${base}.wav
+          kill $pid || true
+        done
+
+    # 7) 生成 WAV をコミット＆プッシュ
+    - name: Commit and push WAV
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git add wav-out/*.wav
+        git diff-index --quiet HEAD || git commit -m "chore: add generated WAV from zmusic2"
+        git push
