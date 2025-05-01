@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - '**.zms'
+  workflow_dispatch:
 
 jobs:
   convert:
@@ -16,22 +17,17 @@ jobs:
       - name: Download MDPlayer
         run: |
           Invoke-WebRequest -Uri "https://github.com/kuma4649/MDPlayer/releases/download/STBL492/MDPlayer-STBL492.exe" -OutFile "MDPlayer.exe"
-          # 展開先のフォルダを作成
           New-Item -ItemType Directory -Path MDPlayer | Out-Null
-          # 自己解凍で展開（拡張子が .exe でも .zip のように展開可能）
           Start-Process -Wait -FilePath .\MDPlayer.exe -ArgumentList "/DIR=MDPlayer", "/SILENT"
 
-      - name: Convert .zms to .wav
+      - name: Convert ZMS to WAV
         shell: pwsh
         run: |
           $mdpc = Join-Path $PWD 'MDPlayer\mdpc.exe'
-
-          # wav-out フォルダが無ければ作成
           if (-Not (Test-Path "wav-out")) {
             New-Item -ItemType Directory -Path "wav-out" | Out-Null
           }
 
-          # .zms → .wav 変換ループ
           Get-ChildItem -Recurse -Filter *.zms | ForEach-Object {
             $in  = $_.FullName
             $out = Join-Path $PWD "wav-out\$($_.BaseName).wav"
@@ -39,8 +35,19 @@ jobs:
             & $mdpc -w $in -o $out
           }
 
-      - name: Upload WAV files
-        uses: actions/upload-artifact@v4
-        with:
-          name: wav-files
-          path: wav-out/
+      - name: Copy WAV files to root (optional)
+        run: |
+          Copy-Item -Path wav-out\* -Destination . -Force
+
+      - name: Commit WAV files
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add wav-out/*.wav
+          git commit -m "Add converted WAV files" || echo "Nothing to commit"
+          git push
+        env:
+          GIT_AUTHOR_NAME: github-actions
+          GIT_AUTHOR_EMAIL: github-actions@github.com
+          GIT_COMMITTER_NAME: github-actions
+          GIT_COMMITTER_EMAIL: github-actions@github.com
